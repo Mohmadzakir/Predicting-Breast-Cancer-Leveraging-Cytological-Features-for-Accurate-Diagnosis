@@ -1,0 +1,502 @@
+---
+title: 'MAS8404 | Statistical Learning for Data Science | Predicting Breast Cancer:
+  Leveraging Cytological Features for Accurate Diagnosis'
+author: "Mohmadzakir_Chotaliya-240572857"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+fontsize: 11pt
+geometry: margin=2cm
+mainfont: Arial
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **1. Abstract**
+
+This study analyzed the BreastCancer dataset to classify tissue samples as benign or malignant using cytological features. Key predictors like Cl.thickness, Cell.size, and Bare.nuclei were identified. Among the supervised models, LASSO Logistic Regression achieved the highest accuracy (96.6%), followed by Subset Selection (96.1%). Both LDA and QDA showed strong linear classification performance at 95.6%. Unsupervised k-means clustering aligned closely with actual classifications. While the models performed well, limitations include a small dataset and difficulty with borderline cases. These findings confirm the clinical utility of cytological features for breast cancer diagnosis.
+
+## **2. Exploratory data analysis: Data summary**
+
+**2.1 Data Cleaning**
+
+The Breast Cancer dataset was prepared for analysis by removing rows with missing values, converting categorical variables to numeric, and dropping the unnecessary Id column. This ensured the dataset is clean, consistent, and ready for further exploration.
+
+```{r Load Required Libraries and Dataset,include=FALSE,message=FALSE, warning=FALSE}
+# Load required libraries
+library(tidyverse)
+library(mlbench)
+
+# Load the Breast Cancer dataset
+data("BreastCancer", package = "mlbench")
+
+# Preview the raw dataset
+head(BreastCancer)
+
+
+```
+
+```{r Handle Missing Values,include=FALSE,message=FALSE, warning=FALSE}
+# Check for missing values
+missing_values <- sum(is.na(BreastCancer))
+cat("Number of missing values in the dataset:", missing_values, "\n")
+
+# Remove rows with missing values
+data_cleaned <- BreastCancer %>%
+  filter(complete.cases(.))
+
+# Confirm removal of missing values
+missing_values_cleaned <- sum(is.na(data_cleaned))
+cat("Number of missing values after cleaning:", missing_values_cleaned, "\n")
+
+```
+
+```{r Convert Factor Variables to Numeric,include=FALSE,message=FALSE, warning=FALSE}
+# Convert factors to numeric
+data_cleaned <- data_cleaned %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# Display the structure of the cleaned dataset
+str(data_cleaned)
+
+```
+
+```{r Remove Irrelevant Columns,include=FALSE,message=FALSE, warning=FALSE}
+# Drop the Id column
+data_cleaned <- data_cleaned %>%
+  select(-Id)
+
+# Preview the cleaned dataset
+head(data_cleaned)
+
+
+```
+
+**2.2 Numerical Summary**
+
+```{r Summary Statistics, include=FALSE,message=FALSE, warning=FALSE}
+# Provide a summary of the cleaned dataset
+summary(data_cleaned)
+
+# Display dimensions of the dataset
+cat("The dataset contains", nrow(data_cleaned), "observations and", ncol(data_cleaned), "variables.\n")
+```
+
+The dataset consists of 683 samples with 10 features describing cell characteristics, such as thickness, size, shape, and nuclei properties, measured on a scale of 1 to 10. Most values cluster towards the lower end, indicating healthy-looking cells for many samples. The Class variable identifies samples as benign (1) or malignant (2), with benign cases being more frequent.
+
+**2.3 Distribution of Predictor Variables**
+
+Most predictor variables, like Bare.nuclei, Mitoses, and Normal.nucleoli, have the majority of their values concentrated at the lower end (1–3), indicating minimal abnormalities in many samples. Variables like Cl.thickness and Cell.size show more variation, with values spread between 3 and 7 for about half the samples. This highlights that while most samples appear normal, a subset shows significant irregularities critical for diagnosis.
+
+```{r Numerical Summary, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=6}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Exclude only existing columns
+data_cleaned %>%
+  select(-Class) %>%  # Exclude the Class column (response variable)
+  pivot_longer(cols = everything()) %>%  # Reshape the dataset for plotting
+  ggplot(aes(value)) +
+  geom_histogram(bins = 10, aes(fill = name), alpha = 0.9) +
+  facet_wrap(~name, scales = "free", ncol = 2) +  # Reduced plot size with two columns
+  scale_fill_brewer(palette = "Set3") +  # Use a bright color palette
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 10),  # Adjust facet label size
+    axis.text = element_text(size = 8)    # Adjust axis label size
+  ) +
+  labs(
+    title = "Distribution of Predictor Variables",
+    x = "Values",
+    y = "Frequency"
+  )
+
+```
+
+
+
+**2.4 Relationships Between Predictors and Class (Response Variable)**
+
+```{r Predictors and Class, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=5}
+# Load the necessary libraries
+library(ggplot2)
+library(tidyr)
+
+# Pivot the data and include the Class column for mapping
+data_long <- data_cleaned %>%
+  pivot_longer(cols = -Class, names_to = "name", values_to = "value")  # Pivot all except Class
+
+# Plot the boxplots
+ggplot(data_long, aes(x = as.factor(Class), y = value, fill = as.factor(Class))) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~name, scales = "free") +  # Facet by predictor variable
+  theme_minimal() +
+  labs(
+    title = "Relationships Between Predictors and Class",
+    x = "Class (1 = Benign, 2 = Malignant)",
+    y = "Values",
+    fill = "Class"
+  )
+
+
+```
+
+The relationships between predictor variables show that some are strongly connected. For example, Cell.size and Cell.shape are closely related, with a correlation of 0.91, meaning they often increase together. Similarly, Normal.nucleoli and Bl.cromatin are strongly linked (0.76). Variables like Epith.c.size and Bare.nuclei also show moderate connections with others, while Mitoses stands out as more independent, with weaker relationships (below 0.5). These patterns highlight overlaps between some features and the unique role of others in distinguishing between benign and malignant samples.
+
+**2.5 Correlation Between Predictors**
+
+The heatmap highlights strong relationships between some predictors, like Cell.size and Cell.shape (correlation: 0.91), showing they tend to increase together. Normal.nucleoli also closely aligns with Bl.cromatin (0.76). However, Mitoses has much weaker links with other variables, mostly below 0.5, suggesting it behaves more independently. These patterns show that some features are closely related, which could affect analysis.
+
+```{r Correlation Between Predictors, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6}
+# Ensure necessary libraries are loaded
+library(ggcorrplot)
+
+# Remove non-numeric columns before computing the correlation matrix
+numeric_data <- data_cleaned %>%
+  select(where(is.numeric))  # Select only numeric columns
+
+# Compute the correlation matrix
+cor_matrix <- cor(numeric_data)
+
+# Generate a heatmap-style correlation plot
+ggcorrplot(cor_matrix,
+           method = "square",    # Use square tiles for visualization
+           lab = TRUE,           # Display numeric values
+           lab_size = 3,         # Adjust label size
+           colors = c("#6D9EC1", "white", "#E46726"), # Custom color gradient
+           title = "Correlation Between Predictors",
+           ggtheme = theme_minimal())  # Minimal theme for a clean look
+
+```
+
+
+
+## **3. Exploratory data analysis: Unsupervised leaning**
+
+This section uses k-means clustering to analyze the BreastCancer dataset and understand whether unusual samples are likely to be benign or malignant.
+
+```{r Remove class and scale numeric data, include=FALSE, message=FALSE, warning=FALSE}
+# Load the dplyr package
+library(dplyr)
+
+# Remove the response variable (Class) and select only numeric columns
+cluster_data <- data_cleaned %>%
+  select(-Class) %>%  # Exclude the Class column
+  select(where(is.numeric))  # Ensure only numeric columns are selected
+
+# Scale the data for clustering
+scaled_data <- scale(cluster_data)
+
+# Preview scaled data
+head(scaled_data)
+
+
+```
+
+**3.1 K-Means Clustering**
+
+**i) Choose Optimal Number of Clusters**
+
+```{r Optimal Number of Clusters, echo=FALSE,message=FALSE, warning=FALSE, fig.width=9, fig.height=3.5}
+# Compute the total within-cluster sum of squares (WSS) for k = 1 to 10
+wss <- sapply(1:10, function(k) {
+  kmeans(scaled_data, centers = k, nstart = 20)$tot.withinss
+})
+
+# Plot the Elbow Method
+plot(1:10, wss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters (k)", ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for Choosing Optimal k")
+
+```
+
+The Elbow Method plot shows the within-cluster sum of squares (WSS) for different numbers of clusters (k). The steep drop in WSS from k=1 to k=2 indicates that dividing the data into two clusters significantly improves clustering efficiency. After k=2, the reduction in WSS becomes marginal, forming an "elbow" at k=2. This supports the hypothesis that two primary clusters exist in the data, likely corresponding to benign and malignant tissue. Beyond k=2, additional clusters offer little improvement, suggesting two clusters are optimal.
+
+**ii) Perform K-Means with Optimal Clusters**
+
+```{r k-means clustering, echo=FALSE,message=FALSE, warning=FALSE}
+# Perform k-means clustering with k = 2 (assumed optimal from the elbow method)
+kmeans_result <- kmeans(scaled_data, centers = 2, nstart = 20)
+
+# Add cluster assignments to the original data
+data_cleaned$Cluster <- kmeans_result$cluster
+
+# Preview clustering results
+table(data_cleaned$Cluster, data_cleaned$Class)
+
+```
+
+The clustering closely matches the actual classifications, with most malignant samples (434) in one cluster and benign samples (221) in the other. However, 28 samples were misclassified, possibly due to overlapping features or unusual cases. Overall, the features do a good job of separating benign and malignant tissue.
+
+**iii) Visualize Clusters**
+
+```{r Visualize clusters, echo=FALSE,message=FALSE, warning=FALSE, fig.width=9, fig.height=3}
+# Visualize clusters using PCA
+library(ggplot2)
+pca_result <- prcomp(scaled_data)
+pca_data <- data.frame(pca_result$x[, 1:2], Cluster = as.factor(kmeans_result$cluster))
+
+ggplot(pca_data, aes(PC1, PC2, color = Cluster)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "K-Means Clustering Visualization (PCA)",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+
+```
+
+The PCA visualization shows clear separation, with Cluster 1 containing 434 malignant samples and Cluster 2 aligning with 221 benign samples. Overlap exists, with 10 benign and 18 malignant samples misclassified, and a few isolated outliers suggesting unusual cases. Overall, clustering effectively distinguishes benign from malignant samples.
+
+Moving forward, supervised learning methods like logistic regression or LDA, along with advanced techniques like hierarchical clustering, could help refine predictions and uncover deeper insights.
+
+## **4. Supervised learning**
+
+This section explores supervised learning methods, including logistic regression, LASSO, LDA, and QDA, to classify breast tissue as benign or malignant, comparing their performance to find the most effective approach.
+
+**4.1 Data Preparation**
+
+```{r Split data, include=TRUE,echo=FALSE,message=FALSE, warning=FALSE}
+# Split data into training (70%) and testing (30%) sets
+set.seed(123)
+train_index <- sample(seq_len(nrow(data_cleaned)), size = 0.7 * nrow(data_cleaned))
+train_data <- data_cleaned[train_index, ]
+test_data <- data_cleaned[-train_index, ]
+
+# Define predictors and response
+X_train <- train_data[, -which(names(train_data) == "Class")]
+y_train <- train_data$Class
+X_test <- test_data[, -which(names(test_data) == "Class")]
+y_test <- test_data$Class
+
+cat("Training samples:", nrow(train_data), "\nTesting samples:", nrow(test_data), "\n")
+```
+
+The data is split into 70% training (478 samples) and 30% testing (205 samples) to train models effectively and evaluate them on unseen data, with Class as the response variable.
+
+**4.2 Logistic Regression with Subset Selection**
+
+```{r subset selection, echo=FALSE,message=FALSE, warning=FALSE, fig.width=10, fig.height=5}
+# Load required library
+# Load necessary libraries
+library(tidyverse)
+library(leaps)
+
+# Data Preprocessing ------------------------------------------------------
+
+# Recode the Class variable to binary (0 = Benign, 1 = Malignant)
+train_data <- train_data %>%
+  mutate(Class = ifelse(Class == 1, 0, 1))
+
+test_data <- test_data %>%
+  mutate(Class = ifelse(Class == 1, 0, 1))
+
+# Subset Selection --------------------------------------------------------
+
+# Apply best subset selection
+bss_fit <- regsubsets(Class ~ ., data = train_data, method = "exhaustive", nvmax = 9)
+bss_summary <- summary(bss_fit)
+
+# Extract the best model based on BIC
+best_bic <- which.min(bss_summary$bic)
+cat("Number of predictors in the best model:", best_bic, "\n")
+
+# Get the predictors in the best model
+best_predictors <- names(which(bss_summary$which[best_bic, -1]))  # Exclude intercept
+cat("Predictors in the best model:\n", paste(best_predictors, collapse = ", "), "\n")
+
+# Visualize BIC
+plot(1:9, bss_summary$bic, type = "b", xlab = "Number of Predictors", ylab = "BIC", main = "BIC for Subset Selection")
+points(best_bic, bss_summary$bic[best_bic], col = "red", pch = 16)
+
+# Logistic Regression with Selected Predictors ----------------------------
+
+# Fit logistic regression using the best subset of predictors
+subset_formula <- as.formula(paste("Class ~", paste(best_predictors, collapse = " + ")))
+subset_model <- glm(subset_formula, data = train_data, family = "binomial")
+
+# Make predictions on the test data
+subset_probabilities <- predict(subset_model, newdata = test_data, type = "response")
+subset_predictions <- ifelse(subset_probabilities > 0.5, 1, 0)  # Convert probabilities to binary class labels
+
+# Calculate accuracy
+subset_accuracy <- mean(subset_predictions == test_data$Class)
+cat("Subset Selection Logistic Regression Accuracy:", subset_accuracy, "\n")
+
+```
+
+Subset selection achieved an impressive accuracy of 96.1%, identifying Cl.thickness, Cell.size, Bare.nuclei, Bl.cromatin, and Cluster as the most important predictors. These features provide a clear and simple way to reliably distinguish between benign and malignant samples.
+
+
+
+
+
+
+**4.3 Regularized Logistic Regression (LASSO)**
+
+```{r plot-and-table, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=5}
+# Load necessary libraries
+library(glmnet)
+library(gridExtra)
+library(ggplotify)
+
+# Convert data to matrix format for glmnet
+X_train_matrix <- as.matrix(X_train)
+y_train_binary <- as.numeric(y_train) - 1  # Convert Class to binary (0, 1)
+X_test_matrix <- as.matrix(X_test)
+y_test_binary <- as.numeric(y_test) - 1   # Convert Class to binary (0, 1)
+
+# Fit LASSO model
+lasso_fit <- cv.glmnet(X_train_matrix, y_train_binary, family = "binomial", alpha = 1)
+
+# Generate the plot of cross-validation results and convert it to a grob
+cv_plot <- as.grob(function() plot(lasso_fit))
+
+# Extract optimal lambda
+lambda_min <- lasso_fit$lambda.min
+
+# Coefficients at optimal lambda
+lasso_coefs <- as.matrix(coef(lasso_fit, s = lambda_min))
+coef_table <- data.frame(
+  Predictor = rownames(lasso_coefs),
+  Coefficient = as.numeric(lasso_coefs)
+)
+
+# Convert the table to a grob
+coef_grob <- tableGrob(
+  coef_table,
+  rows = NULL,
+  theme = ttheme_minimal()
+)
+
+# Combine the plot and the table
+grid.arrange(cv_plot, coef_grob, ncol = 2, top = "LASSO Results: Plot and Coefficients")
+
+# Predict on test data using the optimal lambda
+lasso_predictions <- predict(lasso_fit, newx = X_test_matrix, s = "lambda.min", type = "response")
+lasso_predictions_class <- ifelse(lasso_predictions > 0.5, 1, 0)  # Threshold for classification
+
+# Calculate accuracy
+lasso_accuracy <- mean(lasso_predictions_class == y_test_binary)
+
+# Output the accuracy
+cat("LASSO Logistic Regression Accuracy:", lasso_accuracy, "\n")
+```
+
+LASSO Logistic Regression achieved an impressive 96.6% accuracy, highlighting important predictors of malignancy like Cl.thickness, Cell.size, Bare.nuclei, Bl.cromatin, and Mitoses, while leaving out less relevant features. Using cross-validation to fine-tune the penalty (lambda), the model stays simple yet effective, reducing multicollinearity and focusing on the most impactful predictors for accurate insights.
+
+
+
+**4.4 Linear Discriminant Analysis (LDA)**
+
+```{r LDA model, echo=FALSE,message=FALSE, warning=FALSE, fig.width=10, fig.height=5}
+# Load necessary library
+library(MASS)
+library(ggplot2)
+
+# Fit LDA model
+lda_model <- lda(Class ~ ., data = train_data)
+
+# Predict on test data
+lda_predictions <- predict(lda_model, test_data)
+lda_class <- lda_predictions$class  # Extract predicted classes
+lda_accuracy <- mean(lda_class == test_data$Class)
+cat("LDA accuracy:", lda_accuracy, "\n")
+
+# Visualize LDA predictions (using LD1)
+lda_data <- data.frame(
+  LD1 = lda_predictions$x[, 1],  # First linear discriminant
+  Class = as.factor(test_data$Class)
+)
+
+ggplot(lda_data, aes(x = LD1, fill = Class)) +
+  geom_density(alpha = 0.7) +
+  labs(
+    title = "LDA Results: Density Plot of Linear Discriminant 1",
+    x = "Linear Discriminant 1",
+    y = "Density",
+    fill = "Class"
+  ) +
+  theme_minimal()
+
+
+```
+
+LDA delivered an impressive accuracy of 95.6% (0.9561) on the test data, showing it’s very effective at distinguishing between benign and malignant cases. This suggests the dataset works well with linear classification, and further analysis could help identify which features have the biggest impact on separating the classes.
+
+
+
+
+**4.5 Quadratic Discriminant Analysis (QDA)**
+
+```{r , echo=FALSE,message=FALSE, warning=FALSE, fig.width=10, fig.height=4}
+# Load necessary libraries
+library(MASS)
+library(ggplot2)
+
+# Fit QDA model
+qda_model <- qda(Class ~ ., data = train_data)
+
+# Predict on test data
+qda_predictions <- predict(qda_model, test_data)
+qda_class <- qda_predictions$class  # Extract predicted classes
+qda_accuracy <- mean(qda_class == test_data$Class)  # Calculate accuracy
+cat("QDA accuracy:", qda_accuracy, "\n")
+
+# Create data for visualization
+qda_vis_data <- data.frame(
+  LD1 = qda_predictions$posterior[, 1],  # Posterior probability for Class 1
+  LD2 = qda_predictions$posterior[, 2],  # Posterior probability for Class 2
+  Predicted_Class = as.factor(qda_class),
+  True_Class = as.factor(test_data$Class)
+)
+
+# Scatter plot of posterior probabilities
+ggplot(qda_vis_data, aes(x = LD1, y = LD2, color = Predicted_Class, shape = True_Class)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "QDA Results: Scatter Plot of Posterior Probabilities",
+    x = "Posterior Probability (Class 1)",
+    y = "Posterior Probability (Class 2)",
+    color = "Predicted Class",
+    shape = "True Class"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+
+```
+
+QDA also achieved 95.6% accuracy, just like LDA, suggesting that the data doesn't need more complex decision boundaries and that the class separation is likely linear. The key predictors are probably similar for both methods, and looking at misclassified cases could help uncover any subtle overlaps or patterns in the data.
+
+
+
+**4.6 Model Comparison**
+
+```{r Model Comparison, echo=FALSE,message=FALSE, warning=FALSE}
+# Compile results into a data frame for comparison
+results <- data.frame(
+  Model = c("Subset Selection Logistic Regression", "LASSO Logistic Regression", "Linear Discriminant Analysis (LDA)", "Quadratic Discriminant Analysis (QDA)"),
+  Accuracy = c(subset_accuracy, lasso_accuracy, lda_accuracy, qda_accuracy)
+)
+
+# Display the comparison table
+knitr::kable(results, caption = "Model Comparison: Accuracy Across Methods")
+
+```
+
+LASSO Logistic Regression performed the best, achieving 96.6% accuracy by focusing on the most important features like Bare.nuclei and keeping the model straightforward. Subset Selection was close behind with 96.1% accuracy, offering a simple and clear approach. Both LDA and QDA reached 95.6%, showing the data works well with linear classification, but QDA’s complexity didn’t add much value. Overall, LASSO is the top choice for its balance of accuracy, simplicity, and relevance to the data.
+
+
+## **5. Conclusions and Discussion**
+
+The analysis found LASSO Logistic Regression to be the top performer, with an impressive accuracy of 96.6%. It pinpointed key predictors like Cl.thickness, Cell.size, and Bare.nuclei while leaving out less important ones like Marg.adhesion. Subset Selection Logistic Regression also performed well, with 96.1% accuracy, offering strong results with added interpretability. Both models confirmed the importance of these predictors in distinguishing benign from malignant cases, aligning with earlier data insights. Misclassification mostly occurred in borderline cases with overlapping features, suggesting the need for more features or refined techniques. To improve accuracy and robustness, expanding the dataset or exploring advanced methods like ensemble models or neural networks could be beneficial. Overall, the analysis highlights the clinical value of these nine cytological features in accurately diagnosing breast cancer.
